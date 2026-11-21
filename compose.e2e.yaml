@@ -1,0 +1,19 @@
+# Use with compose.yaml under a separate project name; never reuse the app project.
+services:
+  db:
+    ports: !reset []
+  api:
+    ports: !reset []
+  frontend:
+    ports: !reset []
+  browser:
+    image: rosteriq-browser
+    build:
+      context: ./frontend
+      target: browser
+    environment:
+      BASE_URL: http://frontend:8080
+    depends_on:
+      frontend:
+        condition: service_healthy
+    ipc: host

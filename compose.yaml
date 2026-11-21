@@ -15,7 +15,8 @@ services:
       timeout: 3s
       retries: 10
   migrate:
-    build: .
+    image: rosteriq-api
+    build: ./backend
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: postgresql+psycopg://rosteriq:rosteriq@db:5432/rosteriq
@@ -23,7 +24,8 @@ services:
       db:
         condition: service_healthy
   api:
-    build: .
+    image: rosteriq-api
+    build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://rosteriq:rosteriq@db:5432/rosteriq
     ports:
@@ -35,6 +37,19 @@ services:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)"]
       interval: 10s
       timeout: 6s
+      retries: 3
+  frontend:
+    image: rosteriq-frontend
+    build: ./frontend
+    ports:
+      - "127.0.0.1:3000:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
       retries: 3
 volumes:
   postgres_data:

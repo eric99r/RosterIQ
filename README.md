@@ -1,164 +1,260 @@
-# RosterIQ backend
+# RosterIQ
 
-A small NFL/NBA player catalog for learning Python backend development. Python 3.12+,
-FastAPI, SQLAlchemy 2, PostgreSQL, and Alembic, deployed as one modular monolith.
-Frontend, Redis, queues, provider ingestion, and projections are deferred.
+An NFL/NBA fantasy analytics learning project: a React/TypeScript player catalog,
+FastAPI modular monolith, and PostgreSQL. Frontend and backend live in one repository
+but remain separate applications, dependencies, images, and check suites.
 
-## Start with Docker
+**MVP 1** is the player catalog, Sleeper player import, and React UI baseline.
+See [MVP 1 scope](docs/releases/MVP-1.md) and [how to review and work on issues](CONTRIBUTING.md).
 
-Install Docker Desktop and start its Linux container engine, then run:
+## Product direction and tasks
+
+The next phase adds multi-platform team imports and explainable NBA/NFL research.
+See the [prioritized implementation backlog](docs/BACKLOG.md) for task status,
+acceptance criteria, and dependencies, and the [research/design notes](docs/research/fantasy-analytics.md)
+for metric priorities, source constraints, scoring considerations, and open questions.
+Confirmed platforms are Yahoo NBA, ESPN NFL, and Sleeper NFL. Planned features in
+these documents are not yet implemented.
+
+## Run the full stack
+
+Install Docker Desktop (Linux containers) or Docker Engine with Compose 2.24.4+.
+From the repository root, on Windows, macOS, or Linux:
 
 ```sh
-docker compose up --build -d
-docker compose ps -a
+docker compose up --build -d --wait
 ```
 
-Compose waits for PostgreSQL, runs `alembic upgrade head` in a one-off migration
-container, then starts the API. Open http://localhost:8000/docs for interactive
-OpenAPI documentation. PostgreSQL and the API bind only to localhost.
+- UI: http://localhost:3000
+- API docs through the UI proxy: http://localhost:3000/docs
+- Direct API docs: http://localhost:8000/docs
+- Database: localhost:5432, database/user/password `rosteriq` (local development only)
+
+Compose waits for PostgreSQL, runs Alembic migrations, starts the API, then serves
+React's production build from unprivileged nginx. Ports bind only to localhost.
+The browser uses relative `/api` and `/health` URLs; nginx proxies to the API.
+CORS settings and browser-facing backend environment variables are unnecessary.
 
 ```sh
-docker compose logs api migrate
+docker compose ps -a
+docker compose logs api frontend migrate
 docker compose down
 ```
 
-The named volume keeps data across restarts. `docker compose down --volumes`
-deletes that development data. Credentials in Compose are for local development.
+The existing `postgres_data` volume is retained after the folder move. Keep running
+Compose from this root under the same project name. `down --volumes` deletes the
+app's data; ordinary `down` retains it. An empty database shows an import prompt.
 
-## Run Python locally (PowerShell)
+## Develop with live reload
 
-```powershell
-python --version  # 3.12 or newer
-python -m venv .venv
-.venv\Scripts\python -m pip install -e '.[dev]'
-Copy-Item .env.example .env
-docker compose up -d db
-.venv\Scripts\alembic upgrade head
-.venv\Scripts\python -m uvicorn app.main:app --reload
+```sh
+docker compose -f compose.yaml -f compose.dev.yaml up --build -d --wait
 ```
 
-On macOS/Linux use `.venv/bin/` instead of `.venv\Scripts\`. No shell activation
-is required when invoking these executables directly. Environment variables override
-`.env`; `DATABASE_URL` uses SQLAlchemy's `postgresql+psycopg://` URL scheme.
+Open http://localhost:5173. Edit `frontend/src/` or `backend/app/`; Vite and Uvicorn
+reload automatically. Node dependencies live in the Linux image, avoiding platform
+conflicts with Windows node_modules. Rebuild when package manifests or container
+configuration changes. Vite proxies API requests to `api:8000` inside Compose.
 
-## API
+To return to the production-style UI at port 3000:
+
+```sh
+docker compose down
+docker compose up --build -d --wait
+```
+
+Optional native development: use Python 3.12+ and Node 22.12+ (host Node 16 is too old).
+From the root install Python dependencies with
+`python -m pip install -e './backend[dev]'`, then run Alembic/Uvicorn from `backend/`.
+Copy `backend/.env.example` to `backend/.env`; environment variables override it.
+From `frontend/`, run `npm ci` and `npm run dev`. Vite defaults to proxying
+`http://127.0.0.1:8000`; set `API_PROXY_TARGET` to change that server-side address.
+After moving the backend, reinstall any old editable Python installation that
+still points to the former root-level `app/` folder.
+
+## Linux container checks
+
+These same commands run in CI; no host Python or Node installation is required:
+
+```sh
+docker compose -p rosteriq-checks -f compose.test.yaml run --build --rm checks
+docker compose -p rosteriq-checks -f compose.test.yaml run --build --rm frontend-checks
+docker compose -p rosteriq-checks -f compose.test.yaml down --volumes
+```
+
+Backend checks: Ruff lint/format, SQLite tests, migration upgrade, schema drift,
+PostgreSQL tests, migration downgrade/upgrade, and another drift check. The temporary
+test database exposes no host ports and is separate from the app database.
+
+Frontend checks: ESLint, Vitest/React Testing Library, TypeScript, and production build.
+Component tests cover live counts, search, sport filtering, pagination reset, details,
+and connection errors/retry using mocked API responses. No external provider requests
+are made during tests. The committed npm lockfile is consumed with `npm ci`.
+
+Full-stack Chromium smoke test (runs in its own isolated Compose project):
+
+```sh
+docker compose -p rosteriq-e2e -f compose.yaml -f compose.e2e.yaml run --build --rm browser
+docker compose -p rosteriq-e2e -f compose.yaml -f compose.e2e.yaml down --volumes
+```
+
+This checks the served UI, API proxy, readiness, desktop layout, and mobile overflow.
+When the database contains players, it also checks search and details. The clean CI
+stack starts empty; component tests independently cover populated states. Test screenshots
+and traces are written inside the browser container's `test-results/`. To retain them,
+mount an output directory or copy from a named test container before removing it.
+Always run cleanup after checks, including failures. Never reuse the main app's
+project name for the e2e commands, because their cleanup removes that project's data.
+
+## Custom certificate authorities
+
+If package downloads fail with `CERTIFICATE_VERIFY_FAILED` on your network, supply
+an approved PEM CA bundle as a build secret. On this Windows machine the public
+certificates were exported from trusted Windows stores to `.local/build-ca.pem`.
+This local file is not committed or copied into images. TLS verification stays enabled.
+
+```sh
+docker build --secret id=custom_ca,src=.local/build-ca.pem -t rosteriq-api -t rosteriq-migrate ./backend
+docker build --secret id=custom_ca,src=.local/build-ca.pem -t rosteriq-frontend ./frontend
+docker compose up -d --no-build --wait
+
+docker build --target checks --secret id=custom_ca,src=.local/build-ca.pem -t rosteriq-checks ./backend
+docker build --target checks --secret id=custom_ca,src=.local/build-ca.pem -t rosteriq-frontend-checks ./frontend
+docker compose -p rosteriq-checks -f compose.test.yaml run --rm checks
+docker compose -p rosteriq-checks -f compose.test.yaml run --rm frontend-checks
+docker compose -p rosteriq-checks -f compose.test.yaml down --volumes
+```
+
+For live reload build the frontend with `--target development -t rosteriq-frontend-dev`
+using the same secret, then run the development Compose command without `--build`.
+For browser checks build `--target browser -t rosteriq-browser` from `./frontend`
+with the secret, then run the browser Compose command without `--build`.
+Rebuild after changing source; these images contain a snapshot of the files.
+
+## Player API and UI
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| POST | `/api/v1/players` | Create, return 201 and Location; duplicate identity returns 409 |
-| GET | `/api/v1/players?sport=NFL&limit=20&offset=0` | Filtered page with items, total, limit, offset |
-| GET | `/api/v1/players/{uuid}` | Player or 404 |
-| GET | `/health/live` | Process liveness, independent of the database |
+| POST | `/api/v1/players` | Create; 201 and Location, or 409 for duplicate provider identity |
+| GET | `/api/v1/players?q=mahomes&sport=NFL&limit=20&offset=0` | Search, filter, paginate |
+| GET | `/api/v1/players/{uuid}` | Player details or 404 |
+| GET | `/health/live` | Process liveness |
 | GET | `/health/ready` | Database connectivity; 503 when unavailable |
 
-Example in PowerShell:
+Create example (PowerShell):
 
 ```powershell
-$body = @{
-  provider = 'espn'
-  provider_player_id = '12345'
-  name = 'Example Player'
-  sport = 'NFL'
-  team = 'KC'
-  position = 'QB'
-} | ConvertTo-Json
+$body = @{ provider = 'example'; provider_player_id = '123'; name = 'Example Player'; sport = 'NFL'; team = 'KC'; position = 'QB' } | ConvertTo-Json
 Invoke-RestMethod http://localhost:8000/api/v1/players -Method Post -ContentType 'application/json' -Body $body
-Invoke-RestMethod 'http://localhost:8000/api/v1/players?sport=NFL&limit=10&offset=0'
 ```
 
-`sport` accepts uppercase `NFL` or `NBA`. Limits range from 1 to 100; offsets
-must be nonnegative. Invalid bodies, UUIDs, and query parameters return 422.
-Team and position are optional free text for now; they are not sport-specific enums.
-Names and identifiers are trimmed, blank values rejected, and unknown input fields
-rejected. Provider names are lowercased; provider player IDs remain case-sensitive
-strings so leading zeros and alphanumeric IDs survive.
+The UI displays real catalog counts, literal name search, sport selection, pagination,
+player details, and backend readiness checked every 30 seconds. Refresh rereads the
+local database; it does not trigger a provider import. NBA's count can legitimately
+be zero because the first provider import covers NFL. No projections or simulated
+fantasy statistics are displayed. Provider import history is not persisted yet.
 
-Each record has an internal UUID and a unique `(provider, provider_player_id)` pair.
-This contract assumes a provider's IDs span sports. If a source reuses IDs by league,
-use explicit namespaces such as `source:nfl` and `source:nba`. The same real player
-from two providers currently creates two records; cross-provider identity resolution
-is future work. Database uniqueness handles concurrent inserts safely.
+`sport` accepts `NFL` or `NBA`; limits are 1–100, offsets nonnegative. Invalid inputs
+return 422. Team and position are optional free text. Input is trimmed; blank values
+and unknown body fields are rejected. Provider names are lowercased; provider IDs
+are case-sensitive strings. Search is a case-insensitive literal substring of 1–150
+characters: SQL wildcards `%` and `_` are escaped and values are parameterized.
+Counts apply to the combined filters. Simple scans are sufficient for this catalog;
+trigram indexing can follow measured performance needs.
 
-Pages sort by immutable UUID for deterministic ordering on a fixed dataset. Offset
-pagination is easy to inspect, but concurrent inserts can shift page boundaries;
-cursor pagination can follow if the catalog grows. `total` counts matching players,
-not the whole catalog. Count and page queries use PostgreSQL's default isolation,
-so simultaneous writes may make the count briefly differ from the page snapshot.
+The internal UUID and unique `(provider, provider_player_id)` pair serve different
+purposes. Use league namespaces if a provider reuses IDs across sports. Different
+providers currently create separate records for the same real player. Pages sort
+by immutable UUID on a fixed dataset; concurrent inserts can shift offset pages.
+Count/page queries use PostgreSQL's default isolation, so concurrent writes can
+briefly make their snapshots differ. Cross-provider identity resolution and cursor
+pagination are future work.
 
-## Design for a Java/AWS developer
+## Sleeper NFL import
+
+The first adapter uses [Sleeper's documented player catalog](https://docs.sleeper.com/).
+No API key is required for this non-commercial learning project. From the repository
+root, keep the cached snapshot on the host between one-off container runs:
+
+```powershell
+New-Item -ItemType Directory -Force .local | Out-Null
+docker compose run --rm -v "${PWD}/.local:/data" api python -m app.providers.import_players --cache /data/sleeper-nfl.json
+# Repeat offline without downloading:
+docker compose run --rm -v "${PWD}/.local:/data" api python -m app.providers.import_players --file /data/sleeper-nfl.json
+```
+
+On macOS/Linux use `mkdir -p .local` and `-v "$(pwd)/.local:/data"`. Ensure the mounted
+cache directory is writable by the container's appuser. On custom-CA networks,
+export `SSL_CERT_FILE=/data/build-ca.pem` into the one-off container with
+`-e SSL_CERT_FILE=/data/build-ca.pem` when fetching; offline imports need no CA file.
+Existing root-level `.local/sleeper-nfl.json` snapshots survive the folder refactor.
+
+Sleeper asks callers to fetch at most once per day. The cache is reused for 24 hours;
+keep it between runs and run one importer at a time. It is a local cache, not a
+shared rate limiter. `--file` never uses HTTP. Fetches have a 30-second socket timeout,
+a 50 MiB response limit, and no automatic retries. Invalid downloads do not replace
+an older cache. Failed commands exit with code 1.
+
+Provider data is validated before writes; defenses are skipped and other malformed
+records reject the snapshot. The namespace is `sleeper:nfl`. PostgreSQL upsert updates
+name, team, and position while preserving UUID/creation time. One transaction covers
+all batches; database failures roll back. Players missing from a newer snapshot are
+retained. `processed` counts inserted plus updated records; defenses are counted
+separately. Reimporting does not duplicate identities. There is no public import endpoint.
+
+## Structure and design
 
 ```text
-app/
-  main.py          application factory, lifecycle, router assembly
-  core/config.py   environment-based settings
-  db.py            ORM base, engine, request-scoped sessions
-  health.py        operational endpoints
-  players/
-    router.py      HTTP controller and dependency injection
-    schemas.py     validated request/response DTOs
-    models.py      SQLAlchemy entity and constraints
-    service.py     use cases, queries, transaction ownership
-migrations/        versioned database changes
-tests/             HTTP tests with database dependency overrides
+backend/
+  app/
+    core/config.py       environment settings
+    db.py                ORM base, engine, request-scoped sessions
+    main.py              application factory and lifecycle
+    health.py            operational probes
+    players/             models, DTOs, HTTP routes, use cases
+    providers/           Sleeper adapter and explicit import CLI
+  migrations/            Alembic schema versions
+  tests/                 HTTP and provider tests
+  scripts/check.py       portable check runner
+  pyproject.toml
+  Dockerfile
+frontend/
+  src/
+    App.tsx              catalog, filters, status, and page state
+    PlayerDetails.tsx    accessible native dialog and get-player request
+    api.ts               typed API contracts and request helpers
+    styles.css           responsive layout and visual styles
+  e2e/                   Chromium smoke test
+  package-lock.json
+  Dockerfile             development, checks, browser, and runtime targets
+compose*.yaml             full stack, reload, isolated checks, browser checks
+.github/workflows/        CI for backend, frontend, and full-stack browser checks
 ```
 
-- **Modular monolith:** one process and database, with code grouped by business
-  capability. Future analytics modules can sit alongside `players` without splitting
-  services or adding distributed infrastructure.
-- **FastAPI + Pydantic:** routers resemble Spring MVC controllers. Python type hints
-  describe input/output shapes; Pydantic performs runtime validation and FastAPI
-  generates OpenAPI. `Annotated` attaches validation or dependency metadata to types.
-- **SQLAlchemy:** mapped models resemble JPA entities. An engine owns the connection
-  pool; a `Session` is a unit of work, not a global singleton. `Depends` supplies one
-  session per request and a `yield` dependency closes it, much like try-with-resources.
-  The create service commits before returning, rolls back failed writes, and translates
-  only the expected unique constraint into a domain error. The router maps that to 409.
-- **Synchronous first:** regular `def` handlers let FastAPI run blocking database work
-  in its thread pool. This avoids teaching async I/O at the same time as the ORM.
-  No repository interface is needed yet; the service can express SQLAlchemy queries
-  directly. A process-local settings cache avoids rebuilding configuration each request.
-- **Explicit schema lifecycle:** Alembic plays the role of Flyway/Liquibase. The app
-  never calls `create_all` in production. Migrations run separately before serving.
-  UUIDs are generated by Python; timestamps come from the database.
-- **Operations:** liveness and readiness map to container/ECS/Kubernetes probes.
-  Readiness checks connectivity only; migrations are enforced by deployment order.
-  The image runs as a non-root user. Authentication, production secrets, TLS, and
-  deployment configuration are outside this local learning starter's scope.
+For a Java/AWS developer:
 
-References: [FastAPI dependency cleanup](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/)
-and [SQLAlchemy session lifecycle](https://docs.sqlalchemy.org/en/20/orm/session_basics.html).
+- **Modular monolith:** one backend process/database grouped by capability. React is
+  a separate client in the same repository, so API/UI changes can share a commit.
+- **FastAPI/Pydantic:** routers resemble Spring MVC controllers; schemas are runtime-
+  validated DTOs. Type hints feed validation and OpenAPI. SQLAlchemy models resemble
+  JPA entities. A pooled engine is shared; a Session is a request-scoped unit of work.
+  A yield dependency closes it like try-with-resources. The service owns commits and
+  rollback; expected unique errors become HTTP 409. Synchronous handlers keep learning
+  the ORM straightforward. Alembic is analogous to Flyway/Liquibase; serving the API
+  never creates tables implicitly.
+- **React/TypeScript/Vite:** components compose the view; state drives render output.
+  Small effects load data and cancel stale requests. Search is debounced by 300ms,
+  filter changes reset pagination, and the native dialog provides keyboard focus
+  containment. Typed API contracts live in one module; no global state library or
+  client router is needed for one screen. See [React's Vite guidance](https://react.dev/learn/build-a-react-app-from-scratch)
+  and [Vite's development proxy](https://vite.dev/config/server-options).
+- **One origin:** production nginx serves static React assets and proxies API/docs
+  requests; Vite performs the same role during development. Database credentials stay
+  in the backend environment. Both runtime images run as non-root users.
+- **Portability:** Linux images define Python/Node environments; host tools are optional.
+  Source mounts enable fast iteration, while separate image targets keep test tools
+  out of runtime images. Frontend installs are locked; backend dependency ranges are
+  constrained but do not yet have a reproducible deployment lockfile.
 
-## Tests and code checks
-
-```powershell
-.venv\Scripts\python -m pytest -q
-.venv\Scripts\ruff check .
-.venv\Scripts\ruff format --check .
-```
-
-Default tests use isolated in-memory SQLite databases for quick feedback, covering
-HTTP contracts, filtering, pagination, validation, unique identities, and health
-failures. SQLite is a test convenience; production always uses PostgreSQL.
-
-To test the actual PostgreSQL dialect and migrations, create a **disposable** test DB:
-
-```powershell
-docker compose up -d db
-docker compose exec db createdb -U rosteriq rosteriq_test
-$env:DATABASE_URL = 'postgresql+psycopg://rosteriq:rosteriq@localhost:5432/rosteriq_test'
-.venv\Scripts\alembic upgrade head
-.venv\Scripts\alembic check
-$env:TEST_DATABASE_URL = $env:DATABASE_URL
-.venv\Scripts\python -m pytest -q
-.venv\Scripts\alembic downgrade base
-.venv\Scripts\alembic upgrade head
-Remove-Item Env:TEST_DATABASE_URL
-Remove-Item Env:DATABASE_URL
-```
-
-PostgreSQL tests use an outer transaction with per-session savepoints and roll back
-each test. Never point these commands at a database you need to preserve. Downgrade
-drops the player table. To change the schema, update models, run
-`alembic revision --autogenerate -m "describe change"`, review the generated migration,
-then run `alembic upgrade head`. Dependency ranges are constrained in `pyproject.toml`;
-this starter does not yet include a reproducible deployment lock file.
+Authentication, production secrets/TLS/deployment, Redis, queues, projections, and
+NBA provider ingestion remain outside this starter's current scope.

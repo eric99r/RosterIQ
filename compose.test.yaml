@@ -1,0 +1,29 @@
+services:
+  test-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: rosteriq
+      POSTGRES_PASSWORD: rosteriq
+      POSTGRES_DB: rosteriq_test
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rosteriq -d rosteriq_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  checks:
+    image: rosteriq-checks
+    build:
+      context: ./backend
+      target: checks
+    environment:
+      DATABASE_URL: postgresql+psycopg://rosteriq:rosteriq@test-db:5432/rosteriq_test
+    depends_on:
+      test-db:
+        condition: service_healthy
+  frontend-checks:
+    image: rosteriq-frontend-checks
+    build:
+      context: ./frontend
+      target: checks

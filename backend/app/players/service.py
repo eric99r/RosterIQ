@@ -32,8 +32,13 @@ def create_player(session: Session, data: PlayerCreate) -> Player:
     return player
 
 
-def list_players(session: Session, sport: Sport | None, limit: int, offset: int):
+def list_players(
+    session: Session, sport: Sport | None, limit: int, offset: int, q: str | None = None
+):
     filters = [Player.sport == sport] if sport else []
+    if q:
+        # Escape SQL LIKE wildcards: user input is a literal substring.
+        filters.append(Player.name.icontains(q, autoescape=True))
     total = session.scalar(select(func.count()).select_from(Player).where(*filters))
     items = session.scalars(
         select(Player).where(*filters).order_by(Player.id).limit(limit).offset(offset)
