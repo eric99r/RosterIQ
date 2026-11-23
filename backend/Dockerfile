@@ -3,16 +3,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY pyproject.toml ./
 COPY app ./app
-RUN --mount=type=secret,id=custom_ca \
+RUN --mount=type=secret,id=custom_ca --mount=type=cache,target=/root/.cache/pip \
     if [ -f /run/secrets/custom_ca ]; then export PIP_CERT=/run/secrets/custom_ca; fi; \
-    pip install --no-cache-dir . && useradd --create-home appuser
+    pip install . && useradd --create-home appuser
 COPY alembic.ini ./
 COPY migrations ./migrations
 
 FROM base AS checks
-RUN --mount=type=secret,id=custom_ca \
+RUN --mount=type=secret,id=custom_ca --mount=type=cache,target=/root/.cache/pip \
     if [ -f /run/secrets/custom_ca ]; then export PIP_CERT=/run/secrets/custom_ca; fi; \
-    pip install --no-cache-dir '.[dev]'
+    pip install '.[dev]'
 COPY tests ./tests
 COPY scripts ./scripts
 USER appuser

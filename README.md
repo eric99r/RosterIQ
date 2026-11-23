@@ -74,6 +74,9 @@ still points to the former root-level `app/` folder.
 
 ## Linux container checks
 
+See [the testing workflow](docs/TESTING.md) for the fast edit loop, final checks,
+measured timings, and rules for avoiding unnecessary reruns.
+
 These same commands run in CI; no host Python or Node installation is required:
 
 ```sh
