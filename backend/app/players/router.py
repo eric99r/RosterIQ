@@ -6,6 +6,7 @@ from pydantic import StringConstraints
 from sqlalchemy.orm import Session
 
 from app.db import get_session
+from app.identities.service import IdentityConflictError
 from app.players import service
 from app.players.models import Sport
 from app.players.schemas import PlayerCreate, PlayerPage, PlayerRead
@@ -20,8 +21,10 @@ def create_player(data: PlayerCreate, response: Response, session: Database):
         player = service.create_player(session, data)
     except service.DuplicatePlayerError as exc:
         raise HTTPException(
-            409, "Player already exists for this provider and provider_player_id"
+            409, "Player already exists for this provider, sport, and provider_player_id"
         ) from exc
+    except IdentityConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
     response.headers["Location"] = f"/api/v1/players/{player.id}"
     return player
 

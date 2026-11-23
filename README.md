@@ -162,13 +162,46 @@ characters: SQL wildcards `%` and `_` are escaped and values are parameterized.
 Counts apply to the combined filters. Simple scans are sufficient for this catalog;
 trigram indexing can follow measured performance needs.
 
-The internal UUID and unique `(provider, provider_player_id)` pair serve different
-purposes. Use league namespaces if a provider reuses IDs across sports. Different
-providers currently create separate records for the same real player. Pages sort
+The internal UUID and unique `(provider, sport, provider_player_id)` tuple serve different
+purposes. Different providers retain separate catalog records for the same real
+player; identity mappings can link them to one canonical fantasy asset. Pages sort
 by immutable UUID on a fixed dataset; concurrent inserts can shift offset pages.
 Count/page queries use PostgreSQL's default isolation, so concurrent writes can
-briefly make their snapshots differ. Cross-provider identity resolution and cursor
-pagination are future work.
+briefly make their snapshots differ. Cursor pagination remains future work.
+
+## Canonical identities (RIQ-01)
+
+The `identities` module adds canonical athletes and NFL team defenses, sport-scoped
+provider mappings, trusted-ID resolution, and explicit manual review. Existing
+player UUIDs, URLs, and JSON fields remain unchanged. The same provider ID can now
+exist once per sport. Names never trigger automatic cross-provider links.
+
+- `GET /api/v1/identities?unresolved_only=true&limit=20&offset=0` lists unresolved
+  identities, their source IDs, reasons, and trusted references for review.
+- `GET /api/v1/identities?player_id={uuid}` finds a catalog record's mapping.
+- Optional `sport=NFL` or `sport=NBA` filters either view.
+
+After building the updated API image and applying migrations, CLI operations run
+in Linux on any supported host:
+
+```sh
+docker compose run --rm api python -m app.identities.cli review
+docker compose run --rm api python -m app.identities.cli backfill
+docker compose run --rm api python -m app.identities.cli link --identity-id ID --asset-id ID --reason "Verified source IDs"
+# Only after review confirms there is no existing canonical asset:
+docker compose run --rm api python -m app.identities.cli create --identity-id ID --reason "Reviewed; no existing match"
+```
+
+Replace `ID` with the respective UUID. Backfill is repeatable; upgrade `0002`
+already backfills existing catalog rows. Manual linking requires a compatible
+asset and an evidence note; it cannot reassign an existing link. No public write
+endpoint accepts claims that a source ID is trusted.
+
+See [identity design and migration notes](docs/architecture/identities.md) for the
+data model, Python/SQLAlchemy decisions, and rollback limitations. League adapters
+will supply vetted cross-provider IDs in later tasks; this change does not fetch
+Yahoo/ESPN rosters. The existing player-only Sleeper import still skips defenses;
+future roster adapters can preserve them as `TEAM_DEFENSE` assets.
 
 ## Sleeper NFL import
 
@@ -212,6 +245,7 @@ backend/
     main.py              application factory and lifecycle
     health.py            operational probes
     players/             models, DTOs, HTTP routes, use cases
+    identities/          canonical assets, provider mappings, resolution and review CLI
     providers/           Sleeper adapter and explicit import CLI
   migrations/            Alembic schema versions
   tests/                 HTTP and provider tests

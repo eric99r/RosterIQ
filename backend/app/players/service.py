@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.identities.service import IdentityConflictError, seed_catalog_identities
 from app.players.models import Player, Sport
 from app.players.schemas import PlayerCreate
 
@@ -16,7 +17,12 @@ def create_player(session: Session, data: PlayerCreate) -> Player:
     player = Player(**data.model_dump())
     session.add(player)
     try:
+        session.flush()
+        seed_catalog_identities(session, provenance="players API", player_ids=[player.id])
         session.commit()
+    except IdentityConflictError:
+        session.rollback()
+        raise
     except IntegrityError as exc:
         session.rollback()
         # PostgreSQL identifies the exact constraint; don't hide unrelated database errors.
@@ -24,8 +30,9 @@ def create_player(session: Session, data: PlayerCreate) -> Player:
         if getattr(diag, "constraint_name", None) == "uq_players_provider_identity":
             raise DuplicatePlayerError from exc
         # SQLite supports fast local tests using the same compound uniqueness rule.
-        if "UNIQUE constraint failed: players.provider, players.provider_player_id" in str(
-            exc.orig
+        if (
+            "UNIQUE constraint failed: players.provider, players.sport, players.provider_player_id"
+            in str(exc.orig)
         ):
             raise DuplicatePlayerError from exc
         raise
