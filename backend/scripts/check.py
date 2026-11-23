@@ -3,11 +3,16 @@
 import os
 import subprocess
 import sys
+from time import perf_counter
 
 
 def run(*args: str, env: dict[str, str]) -> None:
     print(f"\nRunning: {' '.join(args)}", flush=True)
-    subprocess.run([sys.executable, "-m", *args], check=True, env=env)
+    started = perf_counter()
+    try:
+        subprocess.run([sys.executable, "-m", *args], check=True, env=env)
+    finally:
+        print(f"Elapsed: {perf_counter() - started:.2f}s", flush=True)
 
 
 def main() -> int:

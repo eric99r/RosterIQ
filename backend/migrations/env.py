@@ -2,6 +2,7 @@ from alembic import context
 
 from app.core.config import get_settings
 from app.db import Base, build_engine
+from app.identities import models as identity_models  # noqa: F401
 from app.players import models  # noqa: F401 -- register model metadata
 
 target_metadata = Base.metadata

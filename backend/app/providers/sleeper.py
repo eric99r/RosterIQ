@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+from app.identities.service import seed_catalog_identities
 from app.players.models import Player, Sport
 from app.players.schemas import PlayerCreate
 
@@ -106,13 +107,16 @@ def import_catalog(session: Session, payload: object) -> dict[str, int]:
                 [player.model_dump() for player in players[start : start + 500]]
             )
             statement = statement.on_conflict_do_update(
-                index_elements=[Player.provider, Player.provider_player_id],
+                index_elements=[Player.provider, Player.sport, Player.provider_player_id],
                 set_={
                     field: getattr(statement.excluded, field)
                     for field in ("name", "team", "position")
                 },
             )
-            session.execute(statement)
+            player_ids = session.scalars(statement.returning(Player.id)).all()
+            seed_catalog_identities(
+                session, provenance="Sleeper NFL catalog", player_ids=player_ids
+            )
         session.commit()
     except Exception:
         session.rollback()

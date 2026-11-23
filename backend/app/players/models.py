@@ -16,7 +16,9 @@ class Sport(enum.StrEnum):
 class Player(Base):
     __tablename__ = "players"
     __table_args__ = (
-        UniqueConstraint("provider", "provider_player_id", name="uq_players_provider_identity"),
+        UniqueConstraint(
+            "provider", "sport", "provider_player_id", name="uq_players_provider_identity"
+        ),
         Index("ix_players_sport_id", "sport", "id"),
     )
 

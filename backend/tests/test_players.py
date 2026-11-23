@@ -28,9 +28,9 @@ def test_provider_identity_and_recovery(client):
     duplicate = {**PLAYER, "provider": " ESPN "}
     assert client.post("/api/v1/players", json=duplicate).status_code == 409
     assert client.post("/api/v1/players", json={**PLAYER, "provider": "other"}).status_code == 201
-    # Provider IDs are global within a provider, including across sports.
-    assert client.post("/api/v1/players", json={**PLAYER, "sport": "NBA"}).status_code == 409
-    assert client.get("/api/v1/players").json()["total"] == 2
+    # The same raw source ID can identify different athletes in different sports.
+    assert client.post("/api/v1/players", json={**PLAYER, "sport": "NBA"}).status_code == 201
+    assert client.get("/api/v1/players").json()["total"] == 3
 
 
 def test_filter_and_pagination(client):
